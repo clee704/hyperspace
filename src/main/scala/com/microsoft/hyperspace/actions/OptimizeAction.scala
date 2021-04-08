@@ -136,7 +136,7 @@ class OptimizeAction(
   }
 
   override def logEntry: LogEntry = {
-    // Update `previousIndexLogEntry` to keep `filesToIngore` files and append to it
+    // Update `previousIndexLogEntry` to keep `filesToIgnore` files and append to it
     // the list of newly created index files.
     val hadoopConf = spark.sessionState.newHadoopConf()
     val absolutePath = PathUtils.makeAbsolute(indexDataPath.toString, hadoopConf)

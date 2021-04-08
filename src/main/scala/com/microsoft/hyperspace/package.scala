@@ -45,7 +45,7 @@ package object hyperspace {
      * @return a spark session that contains Hyperspace-specific rules.
      */
     def enableHyperspace(): SparkSession = {
-      disableHyperspace
+      disableHyperspace()
       sparkSession.sessionState.experimentalMethods.extraOptimizations ++=
         hyperspaceOptimizationRuleBatch
       sparkSession.sessionState.experimentalMethods.extraStrategies ++=

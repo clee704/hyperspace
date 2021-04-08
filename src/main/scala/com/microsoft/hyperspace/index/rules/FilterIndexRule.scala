@@ -136,7 +136,6 @@ object FilterIndexRule
    * @param filterColumns List of columns in filter predicate.
    * @param indexedColumns List of indexed columns (e.g. from an index being checked)
    * @param includedColumns List of included columns (e.g. from an index being checked)
-   * @param fileFormat FileFormat for input relation in original logical plan.
    * @return 'true' if
    *         1. Index fully covers output and filter columns, and
    *         2. Filter predicate contains first column in index's 'indexed' columns.

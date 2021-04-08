@@ -199,7 +199,7 @@ private[actions] abstract class CreateActionBase(dataManager: IndexDataManager) 
       val missingPartitionColumns =
         partitionColumnNames
           .filter(ResolverUtils.resolve(spark, _, resolvedColumnNames).isEmpty)
-          .map(col(_))
+          .map(col)
 
       // File id value in DATA_FILE_ID_COLUMN column (lineage column) is stored as a
       // Long data type value. Each source data file has a unique file id, assigned by

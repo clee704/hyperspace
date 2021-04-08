@@ -19,8 +19,8 @@ package com.microsoft.hyperspace.index
 import java.io.FileNotFoundException
 
 import scala.annotation.tailrec
-import scala.collection.mutable.{HashMap, ListBuffer}
 import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 
 import com.fasterxml.jackson.annotation.JsonIgnore
 import org.apache.hadoop.conf.Configuration
@@ -248,7 +248,7 @@ object Directory {
     val leafDirToChildrenFiles = files.toArray.groupBy(_.getPath.getParent)
 
     // Hashmap from directory path to Directory object, used below for quick access from path.
-    val pathToDirectory = HashMap[Path, Directory]()
+    val pathToDirectory = mutable.HashMap[Path, Directory]()
 
     // Set size hint for performance improvement.
     fileIdTracker.setSizeHint(files.length)

@@ -119,9 +119,7 @@ class IndexCollectionManager(
 
   override def getIndexes(states: Seq[String] = Seq()): Seq[IndexLogEntry] = {
     indexLogManagers
-      .map(_.getLatestLog())
-      .filter(_.isDefined)
-      .map(_.get)
+      .flatMap(_.getLatestLog())
       .filter(index => states.isEmpty || states.contains(index.state))
       .map(toIndexLogEntry)
   }

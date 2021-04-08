@@ -108,7 +108,7 @@ object JoinIndexRule
   private def isApplicable(l: LogicalPlan, r: LogicalPlan, condition: Expression): Boolean = {
     // The given plan is eligible if it is supported and index has not been applied.
     def isEligible(optRel: Option[FileBasedRelation]): Boolean = {
-      optRel.map(!RuleUtils.isIndexApplied(_)).getOrElse(false)
+      optRel.exists(!RuleUtils.isIndexApplied(_))
     }
 
     lazy val optLeftRel = RuleUtils.getRelation(spark, l)

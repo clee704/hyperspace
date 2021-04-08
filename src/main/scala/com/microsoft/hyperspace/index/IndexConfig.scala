@@ -98,7 +98,7 @@ object IndexConfig {
      * @return an [[IndexConfig.Builder]] object with updated index name.
      */
     def indexName(indexName: String): Builder = {
-      if (!this.indexName.isEmpty) {
+      if (this.indexName.nonEmpty) {
         throw new UnsupportedOperationException("Index name is already set.")
       }
 

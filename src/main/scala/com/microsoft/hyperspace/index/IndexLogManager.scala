@@ -49,7 +49,7 @@ trait IndexLogManager {
   /** delete latestStable.json */
   def deleteLatestStableLog(): Boolean
 
-  /** write contents of log to id.json using optimistic concurrency. retrun false if fail */
+  /** write contents of log to id.json using optimistic concurrency. return false if fail */
   def writeLog(id: Int, log: LogEntry): Boolean
 }
 
@@ -114,13 +114,13 @@ class IndexLogManagerImpl(indexPath: Path, hadoopConfiguration: Configuration = 
   override def getIndexVersions(states: Seq[String]): Seq[Int] = {
     val latestId = getLatestId()
     if (latestId.isDefined) {
-      (latestId.get to 0 by -1).map { id =>
+      (latestId.get to 0 by -1).flatMap { id =>
         getLog(id) match {
           case Some(entry) if states.contains(entry.state) =>
             Some(id)
           case _ => None
         }
-      }.flatten
+      }
     } else {
       Seq()
     }
