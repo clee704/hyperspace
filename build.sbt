@@ -127,6 +127,8 @@ ThisBuild / Test / fork := true
 
 ThisBuild / Test / javaOptions += "-Xmx1024m"
 
+ThisBuild / Test / envVars += "SPARK_TESTING" -> "1"
+
 /**
  * Release configurations
  */

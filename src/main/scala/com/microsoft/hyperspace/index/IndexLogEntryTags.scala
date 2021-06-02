@@ -16,6 +16,7 @@
 
 package com.microsoft.hyperspace.index
 
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.execution.datasources.InMemoryFileIndex
 
 object IndexLogEntryTags {
@@ -61,4 +62,7 @@ object IndexLogEntryTags {
   // FILTER_REASONS_ENABLED indicates whether whyNotAPI is enabled or not.
   val FILTER_REASONS_ENABLED: IndexLogEntryTag[Boolean] =
     IndexLogEntryTag[Boolean]("filterReasonsEnabled")
+
+  val DATASKIPPING_INDEX_DATA_PREDICATE: IndexLogEntryTag[Option[Expression]] =
+    IndexLogEntryTag[Option[Expression]]("dataskippingIndexDataPredicate")
 }

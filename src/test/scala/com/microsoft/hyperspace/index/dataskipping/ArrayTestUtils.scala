@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Hyperspace Project Authors.
+ * Copyright (2021) The Hyperspace Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-resolvers += "bintray-spark-packages" at "https://dl.bintray.com/spark-packages/maven/"
+package com.microsoft.hyperspace.index.dataskipping
 
-addSbtPlugin("com.eed3si9n" % "sbt-buildinfo" % "0.7.0")
-addSbtPlugin("com.github.gseitz" % "sbt-release" % "1.0.13")
-addSbtPlugin("com.github.sbt" % "sbt-pgp" % "2.1.2")
-addSbtPlugin("com.jsuereth" % "sbt-pgp" % "2.0.1")
-addSbtPlugin("org.scalastyle" %% "scalastyle-sbt-plugin" % "1.0.0")
-addSbtPlugin("org.scoverage" % "sbt-scoverage" % "1.8.2")
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.types.{ArrayType, DataType}
+
+trait ArrayTestUtils {
+  def createArray(values: Seq[Any], dataType: DataType): Expression = {
+    Literal.create(values, ArrayType(dataType, containsNull = false))
+  }
+}

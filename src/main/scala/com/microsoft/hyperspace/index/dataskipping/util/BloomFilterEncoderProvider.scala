@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Hyperspace Project Authors.
+ * Copyright (2021) The Hyperspace Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,11 +14,17 @@
  * limitations under the License.
  */
 
-resolvers += "bintray-spark-packages" at "https://dl.bintray.com/spark-packages/maven/"
+package com.microsoft.hyperspace.index.dataskipping.util
 
-addSbtPlugin("com.eed3si9n" % "sbt-buildinfo" % "0.7.0")
-addSbtPlugin("com.github.gseitz" % "sbt-release" % "1.0.13")
-addSbtPlugin("com.github.sbt" % "sbt-pgp" % "2.1.2")
-addSbtPlugin("com.jsuereth" % "sbt-pgp" % "2.0.1")
-addSbtPlugin("org.scalastyle" %% "scalastyle-sbt-plugin" % "1.0.0")
-addSbtPlugin("org.scoverage" % "sbt-scoverage" % "1.8.2")
+/**
+ * Provides the default implementation of [[BloomFilterEncoder]].
+ */
+object BloomFilterEncoderProvider {
+
+  /**
+   * Returns the default encoder.
+   *
+   * It should return a singleton object declared as "object".
+   */
+  def defaultEncoder: BloomFilterEncoder = FastBloomFilterEncoder
+}

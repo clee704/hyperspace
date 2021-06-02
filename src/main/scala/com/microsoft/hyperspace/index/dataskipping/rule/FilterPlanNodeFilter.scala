@@ -14,23 +14,27 @@
  * limitations under the License.
  */
 
-package com.microsoft.hyperspace.index.covering
+package com.microsoft.hyperspace.index.dataskipping.rule
 
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan}
 
+import com.microsoft.hyperspace.index.rules.{ExtractRelation, QueryPlanIndexFilter, RuleUtils}
 import com.microsoft.hyperspace.index.rules.ApplyHyperspace.PlanToIndexesMap
-import com.microsoft.hyperspace.index.rules.QueryPlanIndexFilter
 
 /**
- * Filters out indexes which are not [[CoveringIndex]].
+ * FilterPlanNodeFilter filters indexes out if
+ *   1) the given plan is not eligible filter plan node.
+ *   2) the source plan of index is not part of the filter plan.
  */
-object CoveringIndexFilter extends QueryPlanIndexFilter {
+object FilterPlanNodeFilter extends QueryPlanIndexFilter {
   override def apply(plan: LogicalPlan, candidateIndexes: PlanToIndexesMap): PlanToIndexesMap = {
-    candidateIndexes
-      .map {
-        case (plan, indexes) =>
-          plan -> indexes.filter(_.derivedDataset.isInstanceOf[CoveringIndex])
-      }
-      .filter { case (_, indexes) => indexes.nonEmpty }
+    if (candidateIndexes.isEmpty) {
+      return Map.empty
+    }
+    plan match {
+      case Filter(_, ExtractRelation(relation)) if !RuleUtils.isIndexApplied(relation) =>
+        candidateIndexes.filterKeys(relation.plan.equals)
+      case _ => Map.empty
+    }
   }
 }
