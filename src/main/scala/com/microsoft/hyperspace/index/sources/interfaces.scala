@@ -140,9 +140,10 @@ trait FileBasedRelation extends SourceRelation {
   def hasParquetAsSourceFormat: Boolean
 
   /**
-   * Returns list of pairs of (file path, file id) to build lineage column.
+   * Returns a function that takes a file path and returns a normalized file
+   * path which has the same format as the results of input_file_path().
    */
-  def lineagePairs(fileIdTracker: FileIdTracker): Seq[(String, Long)]
+  def filePathNormalizer: String => String
 
   /**
    * Returns IndexLogEntry of the closest version for the given index.

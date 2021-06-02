@@ -17,7 +17,7 @@
 package com.microsoft.hyperspace.index
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{DataFrame, SaveMode}
 
 /**
  * Represents an index.
@@ -122,14 +122,17 @@ trait Index {
    * @param deletedSourceDataFiles Source data files deleted from the source
    *   since the creation of this index
    * @param indexContent Unrefreshed index data files
-   * @return Updated index resulting from the indexing operation, or this
-   *         index if no update is needed
+   * @return Pair of (updated index, update mode) where the first value is an
+   *         updated index resulting from the indexing operation or this index
+   *         if no update is needed, and the second value is whether the
+   *         updated index data needs to be merged to the existing index data
+   *         or the existing index data should be overwritten
    */
   def refreshIncremental(
     ctx: IndexerContext,
     appendedSourceData: Option[DataFrame],
     deletedSourceDataFiles: Seq[FileInfo],
-    indexContent: Content): Index
+    indexContent: Content): (Index, Index.UpdateMode)
 
   /**
    * Indexes the source data and returns an updated index and index data.
@@ -144,4 +147,11 @@ trait Index {
    *         index if no update is needed
    */
   def refreshFull(ctx: IndexerContext, sourceData: DataFrame): (Index, DataFrame)
+}
+
+object Index {
+  object UpdateMode extends Enumeration {
+    val Merge, Overwrite = Value
+  }
+  type UpdateMode = UpdateMode.Value
 }

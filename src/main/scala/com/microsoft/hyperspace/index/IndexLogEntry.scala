@@ -672,4 +672,11 @@ class FileIdTracker {
         maxId
       })
   }
+
+  /**
+   * Returns list of pairs of (file path, file id) to build lineage column.
+   */
+  def lineagePairs(pathNormalizer: String => String = identity): Seq[(String, Long)] = {
+    getFileToIdMapping.map(kv => (pathNormalizer(kv._1._1), kv._2))
+  }
 }
