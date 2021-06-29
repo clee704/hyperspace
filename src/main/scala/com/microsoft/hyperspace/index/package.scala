@@ -24,11 +24,17 @@ package object index {
    * IndexConfig is defined as an alias for [[CoveringIndexConfig]] for
    * backward compatibility.
    */
+  @deprecated(
+    "Please use com.microsoft.hyperspace.index.types.covering.CoveringIndexConfig " +
+      "instead.")
   type IndexConfig = CoveringIndexConfig
 
   /**
    * IndexConfig is defined as an alias for [[CoveringIndexConfig]] for
    * backward compatibility.
    */
+  @deprecated(
+    "Please use com.microsoft.hyperspace.index.types.covering.CoveringIndexConfig " +
+      "instead.")
   val IndexConfig = CoveringIndexConfig
 }
