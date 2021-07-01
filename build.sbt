@@ -85,18 +85,16 @@ lazy val commonSettings = Seq(
     sparkVersion,
     "sparkShortVersion" -> sparkVersion.value.short),
   buildInfoPackage := "com.microsoft.hyperspace",
-
   name := "hyperspace-core",
   moduleName := name.value + s"-spark${sparkVersion.value.short}",
   libraryDependencies ++= deps(sparkVersion.value),
-
   // Scalastyle
-  scalastyleConfig := (ThisBuild / scalastyleConfig).value,
   compileScalastyle := (Compile / scalastyle).toTask("").value,
+  Compile / scalastyleConfig := Global / baseDirectory.value / "scalastyle-config.xml",
   Compile / compile := ((Compile / compile) dependsOn compileScalastyle).value,
   testScalastyle := (Test / scalastyle).toTask("").value,
+  Test / scalastyleConfig := Global / baseDirectory.value / "scalastyle-test-config.xml",
   Test / test := ((Test / test) dependsOn testScalastyle).value,
-
   // Package Python files
   (Compile / packageBin / mappings) := (Compile / packageBin / mappings).value ++ listPythonFiles.value,
   listPythonFiles := {
@@ -105,16 +103,7 @@ lazy val commonSettings = Seq(
   })
 
 lazy val listPythonFiles = taskKey[Seq[(File, String)]]("listPythonFiles")
-
-/**
- * ScalaStyle configurations
- */
-ThisBuild / scalastyleConfig := baseDirectory.value / "scalastyle-config.xml"
-
-// Run as part of compile task.
 lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
-
-// Run as part of test task.
 lazy val testScalastyle = taskKey[Unit]("testScalastyle")
 
 /**

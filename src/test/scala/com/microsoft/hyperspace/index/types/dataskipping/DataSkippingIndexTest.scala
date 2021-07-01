@@ -62,7 +62,7 @@ class DataSkippingIndexTest extends DataSkippingSuite {
 
   test("indexColumns and referencedColumns may return different columns") {
     case class MySketch(indexed: String, aux: String) extends Sketch {
-      def aggregateFunctions: Seq[Column] = throw new NotImplementedError()
+      def aggregateFunctions: Seq[Column] = ???
       def auxiliaryColumns: Seq[String] = aux :: Nil
       def indexedColumns: Seq[String] = indexed :: Nil
       def numValues: Int = 1
