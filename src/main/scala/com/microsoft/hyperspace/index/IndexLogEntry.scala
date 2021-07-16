@@ -42,28 +42,38 @@ case class Content(root: Directory, fingerprint: NoOpFingerprint = NoOpFingerpri
   @JsonIgnore
   lazy val files: Seq[Path] = {
     // Recursively find files from directory tree.
-    rec(new Path(root.name), root, (f, prefix) => new Path(prefix, f.name))
+    forEachDir(forEachFile((f, parent) => new Path(parent, f.name)))
   }
 
   @JsonIgnore
   lazy val fileInfos: Set[FileInfo] = {
-    rec(
-      new Path(root.name),
-      root,
-      (
-          f,
-          prefix) =>
-        FileInfo(new Path(prefix, f.name).toString, f.size, f.modifiedTime, f.id)).toSet
+    forEachDir(forEachFile((f, parent) =>
+      FileInfo(new Path(parent, f.name).toString, f.size, f.modifiedTime, f.id))).toSet
   }
 
-  private def rec[T](
-      prefixPath: Path,
+  /**
+   * Fully qualified paths of all directories that don't have subdirectories.
+   */
+  @JsonIgnore
+  lazy val directories: Seq[Path] = {
+    forEachDir((dir, path) => Seq(path).filter(_ => dir.subDirs.isEmpty))
+  }
+
+  private def forEachDir[T](func: (Directory, Path) => Seq[T]): Seq[T] = {
+    forEachDirRec(new Path(root.name), root, func)
+  }
+
+  private def forEachDirRec[T](
+      path: Path,
       directory: Directory,
-      func: (FileInfo, Path) => T): Seq[T] = {
-    val files = directory.files.map(f => func(f, prefixPath))
-    files ++ directory.subDirs.flatMap { dir =>
-      rec(new Path(prefixPath, dir.name), dir, func)
+      func: (Directory, Path) => Seq[T]): Seq[T] = {
+    func(directory, path) ++ directory.subDirs.flatMap { dir =>
+      forEachDirRec(new Path(path, dir.name), dir, func)
     }
+  }
+
+  private def forEachFile[T](func: (FileInfo, Path) => T): (Directory, Path) => Seq[T] = {
+    (dir, path) => dir.files.map(func(_, path))
   }
 }
 
