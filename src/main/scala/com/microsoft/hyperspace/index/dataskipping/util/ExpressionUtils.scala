@@ -16,19 +16,24 @@
 
 package com.microsoft.hyperspace.index.dataskipping.util
 
+import java.util.UUID
+
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
-import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Project, Window}
+import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Filter, LogicalPlan, Project, Window}
 import org.apache.spark.sql.types.DataType
 
 import com.microsoft.hyperspace.HyperspaceException
 import com.microsoft.hyperspace.index.IndexUtils
 import com.microsoft.hyperspace.index.dataskipping.sketch.Sketch
+import com.microsoft.hyperspace.index.rules.ApplyHyperspace.withHyperspaceRuleDisabled
 
 object ExpressionUtils {
+
+  val nullExprId = ExprId(0, new UUID(0, 0))
 
   /**
    * Returns copies of the given sketches with the indexed columns replaced by
@@ -106,6 +111,89 @@ object ExpressionUtils {
     override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
       throw new NotImplementedError
     override def dataType: DataType = throw new NotImplementedError
+    // $COVERAGE-ON$
+  }
+
+  /**
+   * Returns a normalized expression so that the index expression and an
+   * expression in the predicate can be matched.
+   */
+  def normalize(expr: Expression): Expression = {
+    expr.transformUp {
+      case a: AttributeReference => a.withExprId(nullExprId)
+      case g @ GetStructField(child, ordinal, _) => g.copy(child, ordinal, None)
+      // Undo HandleNullInputsForUDF
+      case If(
+            ExtractIsNullDisjunction(args1),
+            // ReplaceNullWithFalseInPredicate can change null to false
+            Literal(null | false, dataType1),
+            udf @ ExtractScalaUDF(dataType2, ExtractKnownNotNullArgs(args2)))
+          if args1 == args2 && dataType1 == dataType2 =>
+        udf.copy(children = args2)
+    }
+  }
+
+  // Needed because ScalaUDF has a different number of arguments depending on Spark versions.
+  private object ExtractScalaUDF {
+    def unapply(e: ScalaUDF): Option[(DataType, Seq[Expression])] = {
+      Some((e.dataType, e.children))
+    }
+  }
+
+  private object ExtractIsNullDisjunction {
+    def unapply(pred: Expression): Option[Seq[Expression]] =
+      pred match {
+        case IsNull(arg) => Some(Seq(arg))
+        case Or(IsNull(arg), ExtractIsNullDisjunction(args)) => Some(arg +: args)
+        case _ => None
+      }
+  }
+
+  private object ExtractKnownNotNullArgs {
+    def unapply(args: Seq[Expression]): Option[Seq[Expression]] = {
+      if (args.forall(_.isInstanceOf[KnownNotNull])) {
+        Some(args.map(_.asInstanceOf[KnownNotNull].child))
+      } else {
+        None
+      }
+    }
+  }
+
+  def getResolvedExprs(
+      spark: SparkSession,
+      sketches: Seq[Sketch],
+      source: LogicalPlan): Option[Map[Sketch, Seq[Expression]]] = {
+    val resolvedExprs = sketches.map { s =>
+      val parsedExprs = s.expressions.map {
+        case (expr, _) => PredicateWrapper(spark.sessionState.sqlParser.parseExpression(expr))
+      }
+      val cond = parsedExprs.reduceLeft(And)
+      val filter = withHyperspaceRuleDisabled {
+        spark.sessionState.optimizer
+          .execute(spark.sessionState.analyzer.execute(Filter(cond, source)))
+          .asInstanceOf[Filter]
+      }
+      val resolved = filter.condition.collect {
+        case PredicateWrapper(expr) => normalize(expr)
+      }
+      s.expressions.map(_._2.get).zip(resolved).foreach {
+        case (dataType, resolvedExpr) =>
+          if (dataType != resolvedExpr.dataType) {
+            return None
+          }
+      }
+      s -> resolved
+    }.toMap
+    Some(resolvedExprs)
+  }
+
+  // Used to preserve sketch expressions during optimization
+  private case class PredicateWrapper(override val child: Expression)
+      extends UnaryExpression
+      with Predicate {
+    // $COVERAGE-OFF$ code never used
+    override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
+      throw new NotImplementedError
     // $COVERAGE-ON$
   }
 }
