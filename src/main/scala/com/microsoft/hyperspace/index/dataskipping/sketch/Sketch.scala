@@ -17,7 +17,7 @@
 package com.microsoft.hyperspace.index.dataskipping.sketch
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, ExprId}
 import org.apache.spark.sql.types.DataType
 
 /**
@@ -75,4 +75,29 @@ trait Sketch {
    * Returns the hash code for this sketch.
    */
   def hashCode: Int
+
+  /**
+   * Converts the given predicate node for source data to an index predicate
+   * that can be used to filter out unnecessary source files when applied to
+   * index data.
+   *
+   * The returned predicate should evaluate to true for an index data row
+   * if the corresponding source data file cannot be excluded, and false if
+   * the source data file can safely skipped.
+   *
+   * The implementation should consider the given predicate as a single node,
+   * not a tree that must be traversed recursively, because that part is
+   * handled by the framework.
+   *
+   * @param predicate Source predicate node
+   * @param sketchValues Sketch value references in index data
+   * @param nameMap Map used to match attribute names
+   * @param resolvedExprs Used to match expressions in predicates
+   * @return Converted predicate for index data
+   */
+  def convertPredicate(
+      predicate: Expression,
+      sketchValues: Seq[Expression],
+      nameMap: Map[ExprId, String],
+      resolvedExprs: Seq[Expression]): Option[Expression]
 }

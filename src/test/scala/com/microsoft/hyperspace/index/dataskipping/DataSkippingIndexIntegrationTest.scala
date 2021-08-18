@@ -16,13 +16,37 @@
 
 package com.microsoft.hyperspace.index.dataskipping
 
-import com.microsoft.hyperspace.HyperspaceException
-import com.microsoft.hyperspace.index.dataskipping.sketch.MinMaxSketch
+import org.apache.hadoop.fs.Path
+import org.apache.spark.SparkException
+import org.apache.spark.sql.{DataFrame, SaveMode}
+import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.types._
+
+import com.microsoft.hyperspace._
+import com.microsoft.hyperspace.index.IndexConstants
+import com.microsoft.hyperspace.index.covering.CoveringIndexConfig
+import com.microsoft.hyperspace.index.dataskipping.sketch._
+import com.microsoft.hyperspace.index.plans.logical.IndexHadoopFsRelation
+import com.microsoft.hyperspace.shim.ExtractFileSourceScanExecRelation
 
 class DataSkippingIndexIntegrationTest extends DataSkippingSuite {
   import spark.implicits._
 
   override val numParallelism: Int = 10
+
+  test("MinMax index is applied for a filter query (EqualTo).") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    def query: DataFrame = df.filter("A = 1")
+    checkIndexApplied(query, 1)
+  }
+
+  test("MinMax index is applied for a filter query (EqualTo) with expression.") {
+    val df = createSourceData(spark.range(100).selectExpr("id as A", "id * 2 as B"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A + B")))
+    def query: DataFrame = df.filter("A+B < 40")
+    checkIndexApplied(query, 2)
+  }
 
   test("Non-deterministic expression is blocked.") {
     val df = createSourceData(spark.range(100).toDF("A"))
@@ -87,5 +111,253 @@ class DataSkippingIndexIntegrationTest extends DataSkippingSuite {
       ex.msg.contains(
         "DataSkippingIndex does not support indexing an expression which does not " +
           "reference source columns: myfunc()"))
+  }
+
+  test("MinMax index is applied for a filter query (EqualTo) with UDF.") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    spark.udf.register("myfunc", (a: Int) => a * 2)
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("myfunc(A)")))
+    def query: DataFrame = df.filter("myfunc(A) = 10")
+    checkIndexApplied(query, 1)
+  }
+
+  test("UDF matching is based on the name, not the actual lambda object.") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    spark.udf.register("myfunc", (a: Int) => a * 2)
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("myfunc(A)")))
+    // Register a new function with the same semantics.
+    spark.udf.register("myfunc", (a: Int) => 2 * a)
+    def query: DataFrame = df.filter("myfunc(A) = 10")
+    checkIndexApplied(query, 1)
+  }
+
+  test("MinMax index is not applied for a filter query if it is not applicable.") {
+    val df = createSourceData(spark.range(100).selectExpr("id as A", "id * 2 as B"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("B")))
+    def query: DataFrame = df.filter("A = 1")
+    checkIndexApplied(query, numParallelism)
+  }
+
+  test("MinMax index is not applied for a filter query if the filter condition is unsuitable.") {
+    val df = createSourceData(spark.range(100).selectExpr("id as A", "id * 2 as B"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    def query: DataFrame = df.filter("A = 1 or B = 2")
+    checkIndexApplied(query, numParallelism)
+  }
+
+  test("MinMax index is not applied for a filter query if the filter condition is IsNull.") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    def query: DataFrame = df.filter("A is null")
+    checkIndexApplied(query, numParallelism)
+  }
+
+  test("Multiple indexes are applied to multiple filters.") {
+    val df = createSourceData(spark.range(100).toDF("A"), path = "TA")
+    val df2 = createSourceData(spark.range(100, 200).toDF("B"), path = "TB")
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    hs.createIndex(df2, DataSkippingIndexConfig("myind2", MinMaxSketch("B")))
+    def query: DataFrame = df.filter("A = 10").union(df2.filter("B = 110"))
+    checkIndexApplied(query, 2)
+  }
+
+  test("Single index is applied to multiple filters.") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    def query: DataFrame = df.filter("A = 10").union(df.filter("A = 20"))
+    checkIndexApplied(query, 2)
+  }
+
+  test("Single index is applied to a single filter.") {
+    val df = createSourceData(spark.range(100).selectExpr("id as A", "id * 2 as B"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    def query: DataFrame = df.filter("A = 10").union(df.filter("B = 120"))
+    checkIndexApplied(query, numParallelism + 1)
+  }
+
+  test(
+    "DataSkippingIndex works correctly for CSV where the same source data files can be " +
+      "interpreted differently.") {
+    // String order: 1 < 10 < 2
+    // Int order: 1 < 2 < 10
+    createFile(dataPath("1.csv"), Seq("a", "1", "2", "10").mkString("\n").getBytes())
+    createFile(dataPath("2.csv"), Seq("a", "3", "4", "5").mkString("\n").getBytes())
+    val paths = Seq(dataPath("1.csv").toString, dataPath("2.csv").toString)
+    val dfString = spark.read.option("header", "true").csv(paths: _*)
+    assert(dfString.schema.head.dataType === StringType)
+    val dfInt = spark.read.option("header", "true").option("inferSchema", "true").csv(paths: _*)
+    assert(dfInt.schema.head.dataType === IntegerType)
+
+    withIndex("myind") {
+      hs.createIndex(dfString, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+      checkIndexApplied(dfString.filter("A = 3"), 2)
+      checkIndexApplied(dfString.filter("A = 10"), 2)
+      checkIndexApplied(dfString.filter("A = '3'"), 1)
+      checkIndexApplied(dfString.filter("A = '10'"), 1)
+      checkIndexApplied(dfInt.filter("A = 3"), 2)
+      checkIndexApplied(dfInt.filter("A = 10"), 2)
+      checkIndexApplied(dfInt.filter("A = '3'"), 2)
+      checkIndexApplied(dfInt.filter("A = '10'"), 2)
+    }
+    withIndex("myind") {
+      hs.createIndex(dfInt, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+      checkIndexApplied(dfString.filter("A = 3"), 2)
+      checkIndexApplied(dfString.filter("A = 10"), 2)
+      checkIndexApplied(dfString.filter("A = '3'"), 2)
+      checkIndexApplied(dfString.filter("A = '10'"), 2)
+      checkIndexApplied(dfInt.filter("A = 3"), 2)
+      checkIndexApplied(dfInt.filter("A = 10"), 1)
+      checkIndexApplied(dfInt.filter("A = '3'"), 2)
+      checkIndexApplied(dfInt.filter("A = '10'"), 1)
+    }
+  }
+
+  test("MinMax index is applied for a filter query (EqualTo) with selection.") {
+    val df = createSourceData(spark.range(100).selectExpr("id as A", "id * 2 as B"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    def query: DataFrame = df.filter("A = 1").select("B")
+    checkIndexApplied(query, 1)
+  }
+
+  test("MinMax index can be refreshed (mode = incremental).") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    createSourceData(spark.range(100, 200).toDF("A"), saveMode = SaveMode.Append)
+    hs.refreshIndex("myind", "incremental")
+    def query: DataFrame = spark.read.parquet(dataPath().toString).filter("A = 1 OR A = 123")
+    checkIndexApplied(query, 2)
+    assert(numIndexDataFiles("myind") === 2)
+  }
+
+  test("MinMax index can be refreshed (mode = full).") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    createSourceData(spark.range(100, 200).toDF("A"), saveMode = SaveMode.Append)
+    hs.refreshIndex("myind", "full")
+    def query: DataFrame = spark.read.parquet(dataPath().toString).filter("A = 1 OR A = 123")
+    checkIndexApplied(query, 2)
+    assert(numIndexDataFiles("myind") === 1)
+  }
+
+  test(
+    "MinMax index can be applied without refresh when source files are added " +
+      "if hybrid scan is enabled.") {
+    withSQLConf(
+      IndexConstants.INDEX_HYBRID_SCAN_ENABLED -> "true",
+      IndexConstants.INDEX_HYBRID_SCAN_APPENDED_RATIO_THRESHOLD -> "1") {
+      val df = createSourceData(spark.range(100).toDF("A"))
+      hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+      createSourceData(spark.range(100, 200).toDF("A"), saveMode = SaveMode.Append)
+      def query: DataFrame = spark.read.parquet(dataPath().toString).filter("A = 1 OR A = 123")
+      checkIndexApplied(query, 11)
+    }
+  }
+
+  test("Empty source data does not cause an error.") {
+    val df = createSourceData(spark.range(0).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    def query: DataFrame = df.filter("A = 1")
+    checkIndexApplied(query, 1)
+  }
+
+  test("Empty source data followed by refresh incremental works as expected.") {
+    val df = createSourceData(spark.range(0).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    createSourceData(spark.range(100).toDF("A"), saveMode = SaveMode.Append)
+    hs.refreshIndex("myind", "incremental")
+    def query: DataFrame = spark.read.parquet(dataPath().toString).filter("A = 1")
+    checkIndexApplied(query, 2)
+  }
+
+  test("MinMax index can be optimized.") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    createSourceData(spark.range(100, 200).toDF("A"), saveMode = SaveMode.Append)
+    hs.refreshIndex("myind", "incremental")
+    assert(numIndexDataFiles("myind") === 2)
+    hs.optimizeIndex("myind")
+    assert(numIndexDataFiles("myind") === 1)
+    def query: DataFrame = spark.read.parquet(dataPath().toString).filter("A = 1 OR A = 123")
+    checkIndexApplied(query, 2)
+  }
+
+  test("CoveringIndex is applied if both CoveringIndex and DataSkippingIndex are applicable.") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("ds", MinMaxSketch("A")))
+    hs.createIndex(df, CoveringIndexConfig("ci", Seq("A"), Nil))
+    spark.enableHyperspace
+    def query: DataFrame = df.filter("A = 1 or A = 50")
+    val rel = query.queryExecution.optimizedPlan.collect {
+      case LogicalRelation(rel: IndexHadoopFsRelation, _, _, _) => rel
+    }
+    assert(rel.map(_.indexName) === Seq("ci"))
+    checkAnswer(query, Seq(1, 50).toDF("A"))
+  }
+
+  test("DataSkippingIndex is applied if CoveringIndex is not applicable.") {
+    val df = createSourceData(spark.range(100).selectExpr("id as A", "id * 2 as B"))
+    hs.createIndex(df, DataSkippingIndexConfig("ds", MinMaxSketch("A")))
+    hs.createIndex(df, CoveringIndexConfig("ci", Seq("A"), Nil))
+    spark.enableHyperspace
+    def query: DataFrame = df.filter("A = 1 or A = 50")
+    val rel = query.queryExecution.optimizedPlan.collect {
+      case LogicalRelation(rel: IndexHadoopFsRelation, _, _, _) => rel
+    }
+    assert(rel.map(_.indexName) === Seq("ds"))
+    checkAnswer(query, Seq((1, 2), (50, 100)).toDF("A", "B"))
+  }
+
+  test("Both CoveringIndex and DataSkippnigIndex can be applied.") {
+    val df = createSourceData(spark.range(100).selectExpr("id as A", "id * 2 as B"))
+    hs.createIndex(df, CoveringIndexConfig("ci", Seq("A"), Nil))
+    hs.createIndex(df, DataSkippingIndexConfig("ds", MinMaxSketch("B")))
+    spark.enableHyperspace
+    def query: DataFrame = df.filter("A = 1").select("A").union(df.filter("B = 100").select("A"))
+    val rel = query.queryExecution.optimizedPlan.collect {
+      case LogicalRelation(rel: IndexHadoopFsRelation, _, _, _) => rel
+    }
+    assert(rel.map(_.indexName).sorted === Seq("ci", "ds"))
+    checkAnswer(query, Seq(1, 50).toDF("A"))
+  }
+
+  test("DataSkippingIndex works correctly with files having special characters in their name.") {
+    assume(!Path.WINDOWS)
+    val df = createSourceData(spark.range(100).toDF("A"), "table ,.;'`~!@#$%^&()_+|\"<>")
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    def query: DataFrame = df.filter("A = 1")
+    checkIndexApplied(query, 1)
+  }
+
+  def checkIndexApplied(query: => DataFrame, numExpectedFiles: Int): Unit = {
+    withClue(s"query = ${query.queryExecution.logical}numExpectedFiles = $numExpectedFiles\n") {
+      spark.disableHyperspace
+      val queryWithoutIndex = query
+      queryWithoutIndex.collect()
+      spark.enableHyperspace
+      val queryWithIndex = query
+      queryWithIndex.collect()
+      checkAnswer(queryWithIndex, queryWithoutIndex)
+      assert(numAccessedFiles(queryWithIndex) === numExpectedFiles)
+      if (numAccessedFiles(queryWithoutIndex) == numAccessedFiles(queryWithIndex)) {
+        assert(
+          queryWithIndex.queryExecution.optimizedPlan ===
+            queryWithoutIndex.queryExecution.optimizedPlan)
+      }
+    }
+  }
+
+  def numAccessedFiles(df: DataFrame): Int = {
+    // This is intentionally different from df.inputFiles.length
+    // to detect the change in the number of files for each plan node.
+    df.queryExecution.executedPlan.collect {
+      case ExtractFileSourceScanExecRelation(HadoopFsRelation(location, _, _, _, _, _)) =>
+        location.inputFiles.length
+    }.sum
+  }
+
+  def numIndexDataFiles(name: String): Int = {
+    val manager = Hyperspace.getContext(spark).indexCollectionManager
+    val latestVersion = manager.getIndexVersions(name, Seq("ACTIVE")).max
+    manager.getIndex(name, latestVersion).get.content.files.length
   }
 }

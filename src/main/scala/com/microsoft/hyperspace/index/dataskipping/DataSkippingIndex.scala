@@ -16,7 +16,12 @@
 
 package com.microsoft.hyperspace.index.dataskipping
 
-import org.apache.spark.sql.{Column, DataFrame, SaveMode}
+import scala.collection.mutable
+
+import org.apache.spark.sql.{Column, DataFrame, SaveMode, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, NamedExpression, Or}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.functions.{input_file_name, min, spark_partition_id}
 
 import com.microsoft.hyperspace.HyperspaceException
@@ -154,11 +159,100 @@ case class DataSkippingIndex(
   }
 
   /**
+   * Converts the given predicate for the source to a predicate that can be used
+   * to filter out unnecessary source data files when applied to index data.
+   */
+  def convertPredicate(
+      spark: SparkSession,
+      predicate: Expression,
+      source: LogicalPlan): Option[Expression] = {
+    val resolvedExprs =
+      ExpressionUtils.getResolvedExprs(spark, sketches, source).getOrElse { return None }
+    val predMap = buildPredicateMap(spark, predicate, source, resolvedExprs)
+
+    // Creates a single index predicate for a single source predicate node,
+    // by combining individual index predicates with And.
+    // True is returned if there are no index predicates for the source predicate node.
+    def toIndexPred(sourcePred: Expression): Expression = {
+      predMap.get(sourcePred).map(_.reduceLeft(And)).getOrElse(Literal.TrueLiteral)
+    }
+
+    // Composes an index predicate visiting the source predicate tree recursively.
+    def composeIndexPred(sourcePred: Expression): Expression =
+      sourcePred match {
+        case and: And => And(toIndexPred(and), and.mapChildren(composeIndexPred))
+        case or: Or => And(toIndexPred(or), or.mapChildren(composeIndexPred))
+        case leaf => toIndexPred(leaf)
+      }
+
+    val indexPredicate = composeIndexPred(predicate)
+
+    // Apply constant folding to get the final predicate.
+    // This is a trimmed down version of the BooleanSimplification rule.
+    // It's just enough to determine whether the index is applicable or not.
+    val optimizePredicate: PartialFunction[Expression, Expression] = {
+      case And(Literal.TrueLiteral, right) => right
+      case And(left, Literal.TrueLiteral) => left
+      case And(a, And(b, c)) if a.deterministic && a == b => And(b, c)
+      case Or(t @ Literal.TrueLiteral, right) => t
+      case Or(left, t @ Literal.TrueLiteral) => t
+    }
+    val optimizedIndexPredicate = indexPredicate.transformUp(optimizePredicate)
+
+    // Return None if the index predicate is True - meaning no conversion can be done.
+    if (optimizedIndexPredicate == Literal.TrueLiteral) {
+      None
+    } else {
+      Some(optimizedIndexPredicate)
+    }
+  }
+
+  /**
+   * Collects index predicates for each node in the source predicate.
+   */
+  private def buildPredicateMap(
+      spark: SparkSession,
+      predicate: Expression,
+      source: LogicalPlan,
+      resolvedExprs: Map[Sketch, Seq[Expression]])
+      : mutable.Map[Expression, mutable.Buffer[Expression]] = {
+    val predMap = mutable.Map[Expression, mutable.Buffer[Expression]]()
+    predicate.foreachUp { sourcePred =>
+      val indexPreds = sketches.zipWithIndex.flatMap {
+        case (sketch, idx) =>
+          sketch.convertPredicate(
+            sourcePred,
+            aggrNames(idx).map(UnresolvedAttribute.quoted(_)),
+            source.output.map(attr => attr.exprId -> attr.name).toMap,
+            resolvedExprs(sketch))
+      }
+      if (indexPreds.nonEmpty) {
+        predMap.getOrElseUpdate(sourcePred, mutable.Buffer.empty) ++= indexPreds
+      }
+    }
+    predMap
+  }
+
+  private def aggrNames(i: Int): Seq[String] = {
+    aggregateFunctions
+      .slice(sketchOffsets(i), sketchOffsets(i + 1))
+      .map(_.expr.asInstanceOf[NamedExpression].name)
+  }
+
+  /**
    * Returns a normalized column name valid for a Parquet format.
    */
   private def getNormalizeColumnName(name: String): String = {
     name.replaceAll("[ ,;{}()\n\t=]", "_")
   }
+
+  /**
+   * Sketch offsets are used to map each sketch to its corresponding columns
+   * in the dataframe.
+   */
+  @transient
+  private lazy val sketchOffsets: Seq[Int] =
+    sketches.map(_.aggregateFunctions.length).scanLeft(0)(_ + _)
 
   @transient
   private lazy val aggregateFunctions = sketches.flatMap { s =>

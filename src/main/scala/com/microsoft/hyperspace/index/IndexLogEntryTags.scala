@@ -16,7 +16,8 @@
 
 package com.microsoft.hyperspace.index
 
-import org.apache.spark.sql.execution.datasources.InMemoryFileIndex
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.execution.datasources.{InMemoryFileIndex, LogicalRelation}
 
 import com.microsoft.hyperspace.index.plananalysis.FilterReason
 
@@ -68,4 +69,10 @@ object IndexLogEntryTags {
   // If it's enabled, FILTER_REASONS and APPLIED_INDEX_RULES info will be tagged.
   val INDEX_PLAN_ANALYSIS_ENABLED: IndexLogEntryTag[Boolean] =
     IndexLogEntryTag[Boolean]("indexPlanAnalysisEnabled")
+
+  val DATASKIPPING_INDEX_DATA_PREDICATE: IndexLogEntryTag[Option[Expression]] =
+    IndexLogEntryTag[Option[Expression]]("dataskippingIndexDataPredicate")
+
+  val DATASKIPPING_INDEX_DATA_RELATION: IndexLogEntryTag[LogicalRelation] =
+    IndexLogEntryTag[LogicalRelation]("dataskippingIndexDataRelation")
 }
