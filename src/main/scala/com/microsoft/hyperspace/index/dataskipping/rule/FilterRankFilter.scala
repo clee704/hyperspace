@@ -25,7 +25,7 @@ object FilterRankFilter extends IndexRankFilter {
   override def apply(
       plan: LogicalPlan,
       applicableIndexes: PlanToIndexesMap): PlanToSelectedIndexMap = {
-    // TODO Multiple data skipping index can be applied to the same plan node,
+    // TODO: Multiple data skipping index can be applied to the same plan node,
     // although the effectiveness decreases as more indexes are applied.
     // The framework should be updated to allow multiple indexes.
     applicableIndexes.collect { case (plan, indexes) if indexes.nonEmpty => plan -> indexes.head }

@@ -60,6 +60,11 @@ class DefaultFileBasedRelation(spark: SparkSession, override val plan: LogicalRe
       filesFromIndex(location)
   }
 
+  override def rootPaths: Seq[Path] =
+    plan.relation match {
+      case HadoopFsRelation(location, _, _, _, _, _) => location.rootPaths
+    }
+
   /**
    * The partition schema of the current relation.
    */

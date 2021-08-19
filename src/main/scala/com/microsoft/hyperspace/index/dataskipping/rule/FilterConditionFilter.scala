@@ -35,19 +35,18 @@ object FilterConditionFilter extends QueryPlanIndexFilter {
       return Map.empty
     }
     plan match {
-      case Filter(pred: Expression, ExtractRelation(relation)) =>
+      case Filter(condition: Expression, ExtractRelation(relation)) =>
         val applicableIndexes = candidateIndexes(relation.plan).flatMap { indexLogEntry =>
           val indexDataPredOpt =
-            indexLogEntry.withCachedTag(
-              plan,
-              IndexLogEntryTags.DATASKIPPING_INDEX_DATA_PREDICATE) {
+            indexLogEntry.withCachedTag(plan, IndexLogEntryTags.DATASKIPPING_INDEX_PREDICATE) {
               val index = indexLogEntry.derivedDataset.asInstanceOf[DataSkippingIndex]
-              index.convertPredicate(spark, pred, relation.plan)
+              index.translateFilterCondition(spark, condition, relation.plan)
             }
           if (withFilterReasonTag(
               plan,
               indexLogEntry,
-              FilterReasons.IneligibleFilterCondition(pred.sql))(indexDataPredOpt.nonEmpty)) {
+              FilterReasons.IneligibleFilterCondition(condition.sql))(
+              indexDataPredOpt.nonEmpty)) {
             Some(indexLogEntry)
           } else {
             None

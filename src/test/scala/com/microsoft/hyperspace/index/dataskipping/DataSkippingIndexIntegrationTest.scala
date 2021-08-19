@@ -41,6 +41,13 @@ class DataSkippingIndexIntegrationTest extends DataSkippingSuite {
     checkIndexApplied(query, 1)
   }
 
+  test("Empty relation is returned if no files match the index predicate.") {
+    val df = createSourceData(spark.range(100).toDF("A"))
+    hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+    def query: DataFrame = df.filter("A = -1")
+    checkIndexApplied(query, 0)
+  }
+
   test("MinMax index is applied for a filter query (EqualTo) with expression.") {
     val df = createSourceData(spark.range(100).selectExpr("id as A", "id * 2 as B"))
     hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A + B")))
@@ -328,6 +335,16 @@ class DataSkippingIndexIntegrationTest extends DataSkippingSuite {
     checkIndexApplied(query, 1)
   }
 
+  test("DataSkippingIndex works correctly with catalog tables") {
+    withTable("T") {
+      spark.range(100).toDF("A").write.saveAsTable("T")
+      val df = spark.read.table("T")
+      hs.createIndex(df, DataSkippingIndexConfig("myind", MinMaxSketch("A")))
+      def query: DataFrame = df.filter("A = 1")
+      checkIndexApplied(query, 1)
+    }
+  }
+
   def checkIndexApplied(query: => DataFrame, numExpectedFiles: Int): Unit = {
     withClue(s"query = ${query.queryExecution.logical}numExpectedFiles = $numExpectedFiles\n") {
       spark.disableHyperspace
@@ -338,21 +355,7 @@ class DataSkippingIndexIntegrationTest extends DataSkippingSuite {
       queryWithIndex.collect()
       checkAnswer(queryWithIndex, queryWithoutIndex)
       assert(numAccessedFiles(queryWithIndex) === numExpectedFiles)
-      if (numAccessedFiles(queryWithoutIndex) == numAccessedFiles(queryWithIndex)) {
-        assert(
-          queryWithIndex.queryExecution.optimizedPlan ===
-            queryWithoutIndex.queryExecution.optimizedPlan)
-      }
     }
-  }
-
-  def numAccessedFiles(df: DataFrame): Int = {
-    // This is intentionally different from df.inputFiles.length
-    // to detect the change in the number of files for each plan node.
-    df.queryExecution.executedPlan.collect {
-      case ExtractFileSourceScanExecRelation(HadoopFsRelation(location, _, _, _, _, _)) =>
-        location.inputFiles.length
-    }.sum
   }
 
   def numIndexDataFiles(name: String): Int = {

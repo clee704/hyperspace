@@ -29,7 +29,7 @@ import com.microsoft.hyperspace.index.rules.ApplyHyperspace.PlanToIndexesMap
  */
 class ScoreBasedIndexPlanOptimizer {
   private val rules: Seq[HyperspaceRule] =
-    Seq(FilterIndexRule, JoinIndexRule, NoOpRule, ApplyDataSkippingIndex)
+    Seq(FilterIndexRule, JoinIndexRule, ApplyDataSkippingIndex, NoOpRule)
 
   // Map for memoization. The key is the logical plan before applying [[HyperspaceRule]]s
   // and its value is a pair of best transformed plan and its score.

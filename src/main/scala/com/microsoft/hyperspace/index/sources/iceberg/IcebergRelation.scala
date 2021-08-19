@@ -73,6 +73,9 @@ class IcebergRelation(
     table.newScan().planFiles().iterator().asScala.toSeq.map(toFileStatus)
   }
 
+  override def rootPaths: Seq[Path] =
+    Seq(PathUtils.makeAbsolute(table.location(), spark.sessionState.newHadoopConf()))
+
   /**
    * The optional partition base path of the current relation.
    */

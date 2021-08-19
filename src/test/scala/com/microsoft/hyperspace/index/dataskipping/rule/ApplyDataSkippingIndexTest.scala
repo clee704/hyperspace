@@ -19,10 +19,12 @@ package com.microsoft.hyperspace.index.dataskipping.rule
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.hyperspace.utils.logicalPlanToDataFrame
 
 import com.microsoft.hyperspace.index._
 import com.microsoft.hyperspace.index.dataskipping._
 import com.microsoft.hyperspace.index.dataskipping.sketch._
+import com.microsoft.hyperspace.index.dataskipping.util._
 
 class ApplyDataSkippingIndexTest extends DataSkippingSuite {
   import spark.implicits._
@@ -267,7 +269,7 @@ class ApplyDataSkippingIndexTest extends DataSkippingSuite {
     Param(dataIN, "A = 2", MinMaxSketch("A"), 1),
     Param(dataIN, "A is null", MinMaxSketch("A"), 10),
     Param(dataIIP, "B = 10", MinMaxSketch("B"), 1),
-    Param(dataIIP, "A = 5 and B = 20", MinMaxSketch("B"), 1),
+    Param(dataIIP, "A = 5 and B = 20", MinMaxSketch("B"), 0),
     Param(dataIIP, "A < 5 and B = 20", MinMaxSketch("B"), 1),
     Param(dataN2, "B.C = 2", MinMaxSketch("B.C"), 1),
     Param(dataN2, "B.c = 2", MinMaxSketch("b.C"), 1),
@@ -336,36 +338,32 @@ class ApplyDataSkippingIndexTest extends DataSkippingSuite {
     val query = sourceData.filter(filter)
     val plan = query.queryExecution.optimizedPlan
     val indexLogEntry = createIndexLogEntry(indexConfig, sourceData)
-    indexLogEntry.setTagValue(
-      plan,
-      IndexLogEntryTags.DATASKIPPING_INDEX_DATA_PREDICATE,
-      indexLogEntry.derivedDataset
-        .asInstanceOf[DataSkippingIndex]
-        .convertPredicate(
-          spark,
-          plan.asInstanceOf[Filter].condition,
-          sourceData.queryExecution.optimizedPlan))
+    val indexDataPred = indexLogEntry.derivedDataset
+      .asInstanceOf[DataSkippingIndex]
+      .translateFilterCondition(
+        spark,
+        plan.asInstanceOf[Filter].condition,
+        sourceData.queryExecution.optimizedPlan)
+    indexLogEntry.setTagValue(plan, IndexLogEntryTags.DATASKIPPING_INDEX_PREDICATE, indexDataPred)
     val optimizedPlan = ApplyDataSkippingIndex.applyIndex(
       plan,
       Map(sourceData.queryExecution.optimizedPlan -> indexLogEntry))
-    if (originalNumFiles == numExpectedFiles) {
+    if (indexDataPred.isEmpty) {
       assert(optimizedPlan === plan)
-    } else if (numExpectedFiles == 0) {
-      optimizedPlan match {
-        case LocalRelation(_, data, _) => assert(data.isEmpty)
-        case _ => fail(s"unexpected optimizedPlan: $optimizedPlan")
-      }
     } else {
       assert(optimizedPlan !== plan)
       optimizedPlan match {
-        case Filter(_, LogicalRelation(relation: HadoopFsRelation, _, _, _)) =>
-          assert(relation.inputFiles.length === numExpectedFiles)
-          checkAnswer(
-            spark.read
-              .option("basePath", dataPath().toString)
-              .parquet(relation.inputFiles: _*)
-              .filter(filter),
-            query)
+        case Filter(
+              _,
+              LogicalRelation(
+                HadoopFsRelation(location: DataSkippingFileIndex, _, _, _, _, _),
+                _,
+                _,
+                _)) =>
+          assert(location.indexDataPred === indexDataPred.get)
+          val optimizedDf = logicalPlanToDataFrame(spark, optimizedPlan)
+          checkAnswer(optimizedDf, query)
+          assert(numAccessedFiles(optimizedDf) === numExpectedFiles)
         case _ => fail(s"unexpected optimizedPlan: $optimizedPlan")
       }
     }

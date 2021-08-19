@@ -17,15 +17,17 @@
 package com.microsoft.hyperspace.index.dataskipping.rule
 
 import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LocalRelation, LogicalPlan}
-import org.apache.spark.sql.execution.datasources.{FileStatusCache, InMemoryFileIndex, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileStatusCache, HadoopFsRelation, InMemoryFileIndex, LogicalRelation, PartitioningAwareFileIndex}
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.isnull
 import org.apache.spark.sql.hyperspace.utils.logicalPlanToDataFrame
+import org.apache.spark.sql.types.StructType
 
 import com.microsoft.hyperspace.index.{IndexConstants, IndexLogEntryTags}
 import com.microsoft.hyperspace.index.dataskipping.DataSkippingIndex
+import com.microsoft.hyperspace.index.dataskipping.util.DataSkippingFileIndex
 import com.microsoft.hyperspace.index.plans.logical.IndexHadoopFsRelation
 import com.microsoft.hyperspace.index.rules.{ExtractRelation, HyperspaceRule, IndexRankFilter, IndexTypeFilter, QueryPlanIndexFilter}
 import com.microsoft.hyperspace.index.rules.ApplyHyperspace.PlanToSelectedIndexMap
@@ -43,57 +45,61 @@ object ApplyDataSkippingIndex extends HyperspaceRule {
     plan match {
       case filter @ Filter(_, ExtractRelation(relation)) =>
         val indexLogEntry = indexes(relation.plan)
-        val indexDataPred = new Column(
-          indexLogEntry
-            .getTagValue(plan, IndexLogEntryTags.DATASKIPPING_INDEX_DATA_PREDICATE)
-            .get
-            .getOrElse { return plan })
-        val indexDataRel =
-          indexLogEntry.withCachedTag(IndexLogEntryTags.DATASKIPPING_INDEX_DATA_RELATION) {
-            val df = spark.read.parquet(indexLogEntry.content.files.map(_.toString): _*)
-            df.queryExecution.optimizedPlan.asInstanceOf[LogicalRelation]
+        val indexDataPred = indexLogEntry
+          .getTagValue(plan, IndexLogEntryTags.DATASKIPPING_INDEX_PREDICATE)
+          .get
+          .getOrElse { return plan }
+        val indexDataSchema = indexLogEntry.derivedDataset.asInstanceOf[DataSkippingIndex].schema
+        val fileStatusCache = FileStatusCache.getOrCreate(spark)
+        val indexDataLoc =
+          indexLogEntry.withCachedTag(IndexLogEntryTags.DATASKIPPING_INDEX_FILEINDEX) {
+            new InMemoryFileIndex(
+              spark,
+              indexLogEntry.content.files,
+              Map.empty,
+              Some(indexDataSchema),
+              fileStatusCache)
           }
+        val indexDataRel = LogicalRelation(
+          new HadoopFsRelation(
+            indexDataLoc,
+            StructType(Nil),
+            indexDataSchema,
+            None,
+            new ParquetFileFormat,
+            Map.empty)(spark))
         val indexData = logicalPlanToDataFrame(spark, indexDataRel)
-
-        val sp = spark
-        import sp.implicits._
-        val pathCol = "_path"
-
-        // TODO: Improve file handling performance with many files (> 1 million).
-        val sourceFiles = relation.allFiles
-        val sourceFileIds = sourceFiles
-          .map(f => (indexLogEntry.fileIdTracker.addFile(f), f.getPath.toString))
-          .toDF(IndexConstants.DATA_FILE_NAME_ID, pathCol)
-
-        val filteredSourceFilesDf = sourceFileIds
-          .hint("broadcast")
-          .join(indexData, Seq(IndexConstants.DATA_FILE_NAME_ID), "left")
-          .filter(isnull(indexData(IndexConstants.DATA_FILE_NAME_ID)) || indexDataPred)
-          .select(pathCol)
-
-        val filteredSourceFiles = filteredSourceFilesDf.collect.map(_.getString(0))
-        if (filteredSourceFiles.isEmpty) {
-          // Return an empty relation.
-          LocalRelation(plan.output)
-        } else if (filteredSourceFiles.length == sourceFiles.length) {
-          // No change to the plan
-          plan
-        } else {
-          val newFsRelation = IndexHadoopFsRelation(
-            relation.createHadoopFsRelation(
+        val originalFileIndex = relation.plan match {
+          case LogicalRelation(HadoopFsRelation(location, _, _, _, _, _), _, _, _) => location
+          case _ =>
+            indexLogEntry.withCachedTag(
+              relation.plan,
+              IndexLogEntryTags.DATASKIPPING_SOURCE_FILEINDEX) {
               new InMemoryFileIndex(
                 spark,
-                filteredSourceFiles.map(new Path(_)),
-                relation.partitionBasePath.map("basePath" -> _).toMap,
-                None,
-                FileStatusCache.getOrCreate(spark)),
-              relation.schema,
-              relation.options),
-            spark,
-            indexLogEntry)
-          val output = relation.output.map(_.asInstanceOf[AttributeReference])
-          filter.copy(child = relation.createLogicalRelation(newFsRelation, output))
+                relation.rootPaths,
+                relation.partitionBasePath
+                  .map(PartitioningAwareFileIndex.BASE_PATH_PARAM -> _)
+                  .toMap,
+                Some(relation.schema),
+                fileStatusCache)
+            }
         }
+        val dataSkippingFileIndex = new DataSkippingFileIndex(
+          spark,
+          indexData,
+          indexDataPred,
+          indexLogEntry.fileIdTracker,
+          originalFileIndex)
+        val newFsRelation = IndexHadoopFsRelation(
+          relation.createHadoopFsRelation(
+            dataSkippingFileIndex,
+            relation.schema,
+            relation.options),
+          spark,
+          indexLogEntry)
+        val output = relation.output.map(_.asInstanceOf[AttributeReference])
+        filter.copy(child = relation.createLogicalRelation(newFsRelation, output))
       case _ => plan
     }
   }

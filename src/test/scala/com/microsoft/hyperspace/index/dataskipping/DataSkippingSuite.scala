@@ -21,6 +21,8 @@ import scala.collection.AbstractIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path, RemoteIterator}
 import org.apache.spark.sql.{DataFrame, QueryTest, SaveMode, SparkSession}
+import org.apache.spark.sql.execution.datasources.FilePartition
+import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.internal.SQLConf
 
 import com.microsoft.hyperspace.Hyperspace
@@ -170,5 +172,15 @@ trait DataSkippingSuite extends QueryTest with HyperspaceSuite {
           LogicalPlanFingerprint(
             LogicalPlanFingerprint.Properties(Seq(Signature("sp", "sig"))))))),
       Map.empty)
+  }
+
+  def numAccessedFiles(df: DataFrame): Int = {
+    df.queryExecution.executedPlan.collect {
+      case scan: DataSourceScanExec =>
+        scan.inputRDDs
+          .flatMap(
+            _.partitions.flatMap(_.asInstanceOf[FilePartition].files.map(_.filePath).toSet))
+          .length
+    }.sum
   }
 }

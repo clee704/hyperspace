@@ -20,14 +20,17 @@ import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGe
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types.DataType
 
-object SortedArrayUtils {
+private[hyperspace] object SortedArrayUtils {
 
   /**
-   * Returns true and the index of the value in the array if the value is
+   * Returns true and the index of the element in the array if the value is
    * contained in the slice [start, end) of the sorted array.
    *
-   * If the value is not found, then false and the index of the first value
+   * If the value is not found, then false and the index of the first element
    * which is greater than the value are returned.
+   *
+   * The array must not contain nulls and duplicate elements.
+   * The value to compare the elements to must not be null.
    */
   def binarySearch(
       arr: ArrayData,

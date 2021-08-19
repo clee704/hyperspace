@@ -70,9 +70,14 @@ object IndexLogEntryTags {
   val INDEX_PLAN_ANALYSIS_ENABLED: IndexLogEntryTag[Boolean] =
     IndexLogEntryTag[Boolean]("indexPlanAnalysisEnabled")
 
-  val DATASKIPPING_INDEX_DATA_PREDICATE: IndexLogEntryTag[Option[Expression]] =
-    IndexLogEntryTag[Option[Expression]]("dataskippingIndexDataPredicate")
+  // DATASKIPPING_INDEX_DATA_PREDICATE stores the index predicate translated
+  // from the plan's filter or join condition.
+  val DATASKIPPING_INDEX_PREDICATE: IndexLogEntryTag[Option[Expression]] =
+    IndexLogEntryTag[Option[Expression]]("dataskippingIndexPredicate")
 
-  val DATASKIPPING_INDEX_DATA_RELATION: IndexLogEntryTag[LogicalRelation] =
-    IndexLogEntryTag[LogicalRelation]("dataskippingIndexDataRelation")
+  val DATASKIPPING_INDEX_FILEINDEX: IndexLogEntryTag[InMemoryFileIndex] =
+    IndexLogEntryTag[InMemoryFileIndex]("dataskippingIndexRelation")
+
+  val DATASKIPPING_SOURCE_FILEINDEX: IndexLogEntryTag[InMemoryFileIndex] =
+    IndexLogEntryTag[InMemoryFileIndex]("dataskippingSourceRelation")
 }

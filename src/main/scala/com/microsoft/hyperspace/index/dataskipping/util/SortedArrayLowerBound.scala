@@ -24,8 +24,8 @@ import org.apache.spark.sql.catalyst.util.{ArrayData, TypeUtils}
 import org.apache.spark.sql.types.IntegerType
 
 /**
- * Returns the index to the first element in the left array which is not less
- * than (greater than or equal to) the right value, or null if there is no such
+ * Returns the index to the first element in the array (left) which is not less
+ * than (greater than or equal to) the value (right), or null if there is no such
  * element.
  *
  * The array must not be null.
@@ -34,14 +34,12 @@ import org.apache.spark.sql.types.IntegerType
  * The array must not contain duplicate elements.
  * The value must not be null.
  */
-case class SortedArrayLowerBound(left: Expression, right: Expression) extends BinaryExpression {
+private[hyperspace] case class SortedArrayLowerBound(left: Expression, right: Expression)
+    extends BinaryExpression {
 
   override def prettyName: String = "sorted_array_lower_bound"
 
   override def dataType: IntegerType = IntegerType
-
-  @transient private lazy val ordering: Ordering[Any] =
-    TypeUtils.getInterpretedOrdering(right.dataType)
 
   override def nullable: Boolean = true
 
@@ -92,4 +90,7 @@ case class SortedArrayLowerBound(left: Expression, right: Expression) extends Bi
       int ${ev.value} = 0;
       $resultCode""")
   }
+
+  @transient private lazy val ordering: Ordering[Any] =
+    TypeUtils.getInterpretedOrdering(right.dataType)
 }

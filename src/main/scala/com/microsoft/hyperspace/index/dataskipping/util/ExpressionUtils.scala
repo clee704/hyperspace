@@ -115,12 +115,14 @@ object ExpressionUtils {
   }
 
   /**
-   * Returns a normalized expression so that the index expression and an
-   * expression in the predicate can be matched.
+   * Returns a normalized expression so that the indexed expression and an
+   * expression in the filter condition can be matched. For example,
+   * expressions in the filter condition can have different ExprIds for every
+   * execution, whereas the indexed expression is fixed.
    */
   def normalize(expr: Expression): Expression = {
     expr.transformUp {
-      case a: AttributeReference => a.withExprId(nullExprId)
+      case a: AttributeReference => a.withExprId(nullExprId).withQualifier(Nil)
       case g @ GetStructField(child, ordinal, _) => g.copy(child, ordinal, None)
       // Undo HandleNullInputsForUDF
       case If(
@@ -159,28 +161,36 @@ object ExpressionUtils {
     }
   }
 
+  /**
+   * Returns sketch expressions that can be used to match indexed expressions
+   * and expressions in the filter condition. For example, when a user creates
+   * an index with MinMaxSketch("A"), we create an expression corresopnding to
+   * "A" here, and later we try to match expression nodes in a filter condition,
+   * say, EqualTo(AttributeReference("A"), Literal(1)), to the expression for
+   * "A".
+   *
+   * We need this step as the filter/join conditions are given to us as a tree
+   * of expressions in the Spark's optimizer, whereas the indexed expressions
+   * are provided and stored as strings.
+   */
   def getResolvedExprs(
       spark: SparkSession,
       sketches: Seq[Sketch],
       source: LogicalPlan): Option[Map[Sketch, Seq[Expression]]] = {
     val resolvedExprs = sketches.map { s =>
-      val parsedExprs = s.expressions.map {
-        case (expr, _) => PredicateWrapper(spark.sessionState.sqlParser.parseExpression(expr))
-      }
-      val cond = parsedExprs.reduceLeft(And)
+      val cond = PredicateWrapper(s.expressions.map {
+        case (expr, _) => spark.sessionState.sqlParser.parseExpression(expr)
+      })
       val filter = withHyperspaceRuleDisabled {
         spark.sessionState.optimizer
           .execute(spark.sessionState.analyzer.execute(Filter(cond, source)))
           .asInstanceOf[Filter]
       }
-      val resolved = filter.condition.collect {
-        case PredicateWrapper(expr) => normalize(expr)
-      }
-      s.expressions.map(_._2.get).zip(resolved).foreach {
-        case (dataType, resolvedExpr) =>
-          if (dataType != resolvedExpr.dataType) {
-            return None
-          }
+      val resolved = filter.condition.asInstanceOf[PredicateWrapper].children.map(normalize)
+      if (!s.expressions.map(_._2.get).zip(resolved).forall {
+          case (dataType, resolvedExpr) => dataType == resolvedExpr.dataType
+        }) {
+        return None
       }
       s -> resolved
     }.toMap
@@ -188,10 +198,12 @@ object ExpressionUtils {
   }
 
   // Used to preserve sketch expressions during optimization
-  private case class PredicateWrapper(override val child: Expression)
-      extends UnaryExpression
+  private case class PredicateWrapper(override val children: Seq[Expression])
+      extends Expression
       with Predicate {
     // $COVERAGE-OFF$ code never used
+    override def nullable: Boolean = false
+    override def eval(input: InternalRow): Any = throw new NotImplementedError
     override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
       throw new NotImplementedError
     // $COVERAGE-ON$

@@ -46,7 +46,7 @@ class FilterConditionFilterTest extends DataSkippingSuite {
     val plan = df.filter("A = 1").queryExecution.optimizedPlan
     assert(FilterConditionFilter(plan, candidateIndexes) === candidateIndexes)
     val indexDataPredOpt =
-      indexLogEntry.getTagValue(plan, IndexLogEntryTags.DATASKIPPING_INDEX_DATA_PREDICATE)
+      indexLogEntry.getTagValue(plan, IndexLogEntryTags.DATASKIPPING_INDEX_PREDICATE)
     assert(
       indexDataPredOpt === Some(Some(And(
         And(

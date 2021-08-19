@@ -16,7 +16,7 @@
 
 package com.microsoft.hyperspace.index.sources
 
-import org.apache.hadoop.fs.FileStatus
+import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -74,6 +74,11 @@ trait FileBasedRelation extends SourceRelation {
    * FileStatus list for all source files that the current relation references to.
    */
   val allFiles: Seq[FileStatus]
+
+  /**
+   * Returns the root paths of the relation.
+   */
+  def rootPaths: Seq[Path]
 
   /**
    * FileInfo list for all source files that the current relation references to.
